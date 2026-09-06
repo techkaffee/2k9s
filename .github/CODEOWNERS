@@ -1,0 +1,4 @@
+# Default owner for everything in this repo unless a more specific
+# pattern below takes precedence. See:
+# https://docs.github.com/articles/about-codeowners
+* @techkaffee
