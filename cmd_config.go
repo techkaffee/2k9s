@@ -317,6 +317,14 @@ func syncOrg(oc *OrgConfig) (added int, err error) {
 	}
 
 	fresh, err := ListSSOAccounts(token, oc.SSORegion)
+	if isSSOUnauthorized(err) {
+		// the cache said the token was still valid, but AWS rejected it
+		// (revoked/invalidated) -> force a fresh login and retry once.
+		token, err = ForceSSOLogin(org, true)
+		if err == nil {
+			fresh, err = ListSSOAccounts(token, oc.SSORegion)
+		}
+	}
 	if err != nil {
 		return 0, err
 	}

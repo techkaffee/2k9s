@@ -386,6 +386,13 @@ func runAccountMode(o options) error {
 		return err
 	}
 	roles, err := ListAccountRoles(token, acct.ID, acct.Org.SSORegion)
+	if isSSOUnauthorized(err) {
+		// cached token looked valid but AWS rejected it -> force relogin, retry once.
+		token, err = ForceSSOLogin(acct.Org, !o.noLogin)
+		if err == nil {
+			roles, err = ListAccountRoles(token, acct.ID, acct.Org.SSORegion)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("couldn't list roles for account %s: %w", acct.Name, err)
 	}
@@ -396,6 +403,12 @@ func runAccountMode(o options) error {
 	infof("role: %s", role)
 
 	creds, err := GetRoleCredentials(token, acct.ID, role, acct.Org.SSORegion)
+	if isSSOUnauthorized(err) {
+		token, err = ForceSSOLogin(acct.Org, !o.noLogin)
+		if err == nil {
+			creds, err = GetRoleCredentials(token, acct.ID, role, acct.Org.SSORegion)
+		}
+	}
 	if err != nil {
 		return err
 	}
