@@ -195,10 +195,19 @@ func EnsureLoginProfile(org *Org) (string, error) {
 }
 
 // EnsureSSOToken gets a token, running `aws sso login` if it has expired.
+// If forceLogin is set, the local cache is skipped and a fresh login is run
+// even if a cached token looks unexpired (used to recover from a token that
+// the cache says is valid but that AWS has actually revoked/invalidated).
 func EnsureSSOToken(org *Org, allowLogin bool) (string, error) {
-	if tok, exp, ok := findSSOToken(org.StartURL); ok {
-		infof("SSO token %s still valid until %s", org.Label, exp.Local().Format("15:04 02/01"))
-		return tok, nil
+	return ensureSSOToken(org, allowLogin, false)
+}
+
+func ensureSSOToken(org *Org, allowLogin, forceLogin bool) (string, error) {
+	if !forceLogin {
+		if tok, exp, ok := findSSOToken(org.StartURL); ok {
+			infof("SSO token %s still valid until %s", org.Label, exp.Local().Format("15:04 02/01"))
+			return tok, nil
+		}
 	}
 	if !allowLogin {
 		hint := org.LoginProfile
@@ -214,7 +223,11 @@ func EnsureSSOToken(org *Org, allowLogin bool) (string, error) {
 		return "", err
 	}
 
-	warnf("SSO token %s expired -> aws sso login --profile %s (opening browser)", org.Label, profile)
+	if forceLogin {
+		warnf("SSO token %s was rejected by AWS -> aws sso login --profile %s (opening browser)", org.Label, profile)
+	} else {
+		warnf("SSO token %s expired -> aws sso login --profile %s (opening browser)", org.Label, profile)
+	}
 	cmd := exec.Command("aws", "sso", "login", "--profile", profile)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stderr, os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -225,6 +238,34 @@ func EnsureSSOToken(org *Org, allowLogin bool) (string, error) {
 		return "", fmt.Errorf("login finished but couldn't read a token from ~/.aws/sso/cache")
 	}
 	return tok, nil
+}
+
+// isSSOUnauthorized reports whether err is the SSO API rejecting an access
+// token as invalid/expired server-side (UnauthorizedException / "Session
+// token not found or invalid"), even though our local cache thought the
+// token was still valid (e.g. it was revoked, or the cache file is stale).
+func isSSOUnauthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UnauthorizedException") ||
+		strings.Contains(msg, "Session token not found or invalid")
+}
+
+// ForceSSOLogin re-runs `aws sso login` unconditionally, ignoring any cached
+// token, and returns the fresh token. Used to recover when AWS rejects a
+// token that the local cache believed was still valid.
+func ForceSSOLogin(org *Org, allowLogin bool) (string, error) {
+	if !allowLogin {
+		hint := org.LoginProfile
+		if hint == "" {
+			hint = "<this org's profile>"
+		}
+		return "", fmt.Errorf("SSO token for %s was rejected by AWS, run: aws sso login --profile %s",
+			org.StartURL, hint)
+	}
+	return ensureSSOToken(org, true, true)
 }
 
 // ListSSOAccounts fetches all accounts the user is allowed to access in the SSO instance.
